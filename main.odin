@@ -6,6 +6,7 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 
+
 W :: 400
 H :: 300
 CW :: 160
@@ -25,6 +26,7 @@ WrongSizeErrorTimer : i32 = 0
 IsConverted : bool = false
 
 main :: proc() {
+	rl.SetTraceLogLevel(.FATAL)
 	when ODIN_DEBUG {
 		track : mem.Tracking_Allocator
 		mem.tracking_allocator_init(&track, context.allocator)
@@ -52,7 +54,7 @@ main :: proc() {
 		return
 	}
 	if len(args) != 3 {
-		fmt.println(
+		fmt.eprintln(
 			"  PicoRepico cmdline usage:",
 			"repico <input.p8.png> <shell.png> <output.p8.png>",
 			"Use only 160x205 png images with PICO-8 palette",
@@ -88,12 +90,12 @@ unloadCart :: proc(target: ^Cart) {
 	target.loaded = false
 }
 
-convertCart :: proc(cart: ^Cart, target: ^Cart) {
-	newCartImage := rl.ImageCopy(target.image)
+convertCart :: proc(cart: rl.Image, target: rl.Image) -> rl.Image {
+	newCartImage := rl.ImageCopy(target)
 	for x : i32 = 0; x < newCartImage.width; x += 1 {
 		for y : i32 = 0; y < newCartImage.height; y += 1{
-			targetCol := rl.GetImageColor(target.image, x, y)
-			sourceCol := rl.GetImageColor(cart.image, x, y)
+			targetCol := rl.GetImageColor(target, x, y)
+			sourceCol := rl.GetImageColor(cart, x, y)
 			newCol := rl.Color{
 				targetCol.r & 0b11111100 | sourceCol.r & 0b00000011,
 				targetCol.g & 0b11111100 | sourceCol.g & 0b00000011,
@@ -103,9 +105,7 @@ convertCart :: proc(cart: ^Cart, target: ^Cart) {
 			rl.ImageDrawPixel(&newCartImage, x, y, newCol)
 		}
 	}
-
-	rl.ExportImage(newCartImage, "output.p8.png")
-	fmt.println("DONE!")
+	return newCartImage
 }
 
 
@@ -150,13 +150,13 @@ GraphicsMode :: proc() {
 			if droppedFiles.count == 1 {
 				f := droppedFiles.paths[0]
 				if mouse.x <= hw {
-					fmt.println("Got cart file: ", f)
+					fmt.eprintln("Got cart file: ", f)
 					if loadCart(&cart, f) == .Wrong_Size {
 						WrongSizeErrorTimer = 180
 					}
 				}
 				if mouse.x > hw {
-					fmt.println("Got target file: ", f)
+					fmt.eprintln("Got target file: ", f)
 					if loadCart(&target, f) == .Wrong_Size {
 						WrongSizeErrorTimer = 180
 					}
@@ -181,7 +181,10 @@ GraphicsMode :: proc() {
 			rl.DrawTexture(target.texture, auto_cast buttonTargetRect.x, auto_cast buttonTargetRect.y, rl.WHITE)
 		}
 
-		if rl.GuiButton(convertButtonRect, "CONVERT!") { convertCart(&cart, &target) }
+		if rl.GuiButton(convertButtonRect, "CONVERT!") {
+			newCart := convertCart(cart.image, target.image)
+			rl.ExportImage(newCart, "output.p8.png")
+		}
 		rl.EndDrawing()
 	}
 
@@ -194,26 +197,36 @@ CmdMode :: proc(args: []string) {
 	argnames := []string {
 		"input file",
 		"shell file",
-		"output file",
 	}
-	images := [3]rl.Image{}
-	i := 0
-	for arg in args {
-		if !strings.has_suffix(arg, ".png") {
-			fmt.printf("%v is not a .png file", argnames[i])
+	images := [2]rl.Image{}
+	for i := 0; i < 2; i+=1 {
+		if !strings.has_suffix(args[i], ".png") {
+			fmt.eprintf("%v is not a .png file", argnames[i])
 			return
 		}
 
-		images[i] = rl.LoadImage(arg)
+		images[i] = rl.LoadImage(strings.unsafe_string_to_cstring(args[i]))
 		if !rl.IsImageReady(images[i]) {
-			fmt.printf("can't load %v", argnames[i])
+			fmt.eprintf("can't load %v", argnames[i])
 			return
 		}
-		i += 1
 	}
 	defer {
 		for img in images {
 			rl.UnloadImage(img)
 		}
 	}
+	
+	newCart := convertCart(images[0], images[1])
+	defer rl.UnloadImage(newCart)
+
+	if args[2] != "--" {
+		rl.ExportImage(newCart, strings.unsafe_string_to_cstring(args[2]))
+	} else {
+		filesize : i32 = 0
+		ptr := rl.ExportImageToMemory(newCart, ".png", &filesize)
+		defer rl.MemFree(ptr)
+		os.write_ptr(os.stdout, ptr, auto_cast filesize)
+	}
+	fmt.eprintln("done!")
 }
