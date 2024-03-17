@@ -3,6 +3,8 @@ package main
 import "core:fmt"
 import rl "vendor:raylib"
 import "core:mem"
+import "core:os"
+import "core:strings"
 
 W :: 400
 H :: 300
@@ -20,6 +22,7 @@ Cart :: struct {
 }
 
 WrongSizeErrorTimer : i32 = 0
+IsConverted : bool = false
 
 main :: proc() {
 	when ODIN_DEBUG {
@@ -43,17 +46,78 @@ main :: proc() {
 			mem.tracking_allocator_destroy(&track)
 		}
 	}
-	
+	args := os.args[1:]
+	if len(args) == 0 {
+		GraphicsMode()
+		return
+	}
+	if len(args) != 3 {
+		fmt.println(
+			"  PicoRepico cmdline usage:",
+			"repico <input.p8.png> <shell.png> <output.p8.png>",
+			"Use only 160x205 png images with PICO-8 palette",
+			sep = "\n",
+		)
+		return 
+	}
+	CmdMode(args)
+} 
+
+CartLoadError :: enum {
+	None,
+	Wrong_Size,
+	Allocation_Error,
+}
+
+loadCart :: proc(target: ^Cart, filename: cstring) -> CartLoadError {
+	unloadCart(target)
+	target.image = rl.LoadImage(filename)
+	if target.image.width != CW || target.image.height != CH {
+		return CartLoadError.Wrong_Size
+	}
+	target.texture = rl.LoadTextureFromImage(target.image)
+	target.loaded = true
+	return CartLoadError.None
+}
+
+unloadCart :: proc(target: ^Cart) {
+	if target.loaded {
+		rl.UnloadTexture(target.texture)
+		rl.MemFree(target.image.data)
+	}
+	target.loaded = false
+}
+
+convertCart :: proc(cart: ^Cart, target: ^Cart) {
+	newCartImage := rl.ImageCopy(target.image)
+	for x : i32 = 0; x < newCartImage.width; x += 1 {
+		for y : i32 = 0; y < newCartImage.height; y += 1{
+			targetCol := rl.GetImageColor(target.image, x, y)
+			sourceCol := rl.GetImageColor(cart.image, x, y)
+			newCol := rl.Color{
+				targetCol.r & 0b11111100 | sourceCol.r & 0b00000011,
+				targetCol.g & 0b11111100 | sourceCol.g & 0b00000011,
+				targetCol.b & 0b11111100 | sourceCol.b & 0b00000011,
+				targetCol.a & 0b11111100 | sourceCol.a & 0b00000011,
+			}
+			rl.ImageDrawPixel(&newCartImage, x, y, newCol)
+		}
+	}
+
+	rl.ExportImage(newCartImage, "output.p8.png")
+	fmt.println("DONE!")
+}
+
+
+GraphicsMode :: proc() {
 	cart := Cart{}
 	target := Cart{}
-
+	
 	rl.InitWindow(W, H, "PicoRepico")
 	rl.SetTargetFPS(60)
 
 	hw : f32 = auto_cast width / 2
 	hh : f32 = auto_cast height / 2
-
-
 	buttonCartRect := rl.Rectangle{
 		x = hw - CW - 20,
 		y = 8,
@@ -123,49 +187,33 @@ main :: proc() {
 
 	unloadCart(&cart)
 	unloadCart(&target)
-} 
-
-CartLoadError :: enum {
-	None,
-	Wrong_Size,
-	Allocation_Error,
 }
 
-loadCart :: proc(target: ^Cart, filename: cstring) -> CartLoadError {
-	unloadCart(target)
-	target.image = rl.LoadImage(filename)
-	if target.image.width != CW || target.image.height != CH {
-		return CartLoadError.Wrong_Size
+
+CmdMode :: proc(args: []string) {
+	argnames := []string {
+		"input file",
+		"shell file",
+		"output file",
 	}
-	target.texture = rl.LoadTextureFromImage(target.image)
-	target.loaded = true
-	return CartLoadError.None
-}
+	images := [3]rl.Image{}
+	i := 0
+	for arg in args {
+		if !strings.has_suffix(arg, ".png") {
+			fmt.printf("%v is not a .png file", argnames[i])
+			return
+		}
 
-unloadCart :: proc(target: ^Cart) {
-	if target.loaded {
-		rl.UnloadTexture(target.texture)
-		rl.MemFree(target.image.data)
+		images[i] = rl.LoadImage(arg)
+		if !rl.IsImageReady(images[i]) {
+			fmt.printf("can't load %v", argnames[i])
+			return
+		}
+		i += 1
 	}
-	target.loaded = false
-}
-
-convertCart :: proc(cart: ^Cart, target: ^Cart) {
-	newCartImage := rl.ImageCopy(target.image)
-	for x : i32 = 0; x < newCartImage.width; x += 1 {
-		for y : i32 = 0; y < newCartImage.height; y += 1{
-			targetCol := rl.GetImageColor(target.image, x, y)
-			sourceCol := rl.GetImageColor(cart.image, x, y)
-			newCol := rl.Color{
-				targetCol.r & 0b11111100 | sourceCol.r & 0b00000011,
-				targetCol.g & 0b11111100 | sourceCol.g & 0b00000011,
-				targetCol.b & 0b11111100 | sourceCol.b & 0b00000011,
-				targetCol.a & 0b11111100 | sourceCol.a & 0b00000011,
-			}
-			rl.ImageDrawPixel(&newCartImage, x, y, newCol)
+	defer {
+		for img in images {
+			rl.UnloadImage(img)
 		}
 	}
-
-	rl.ExportImage(newCartImage, "output.p8.png")
-	fmt.println("DONE!")
 }
