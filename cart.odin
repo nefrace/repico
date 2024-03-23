@@ -29,6 +29,7 @@ loadCart :: proc(target: ^Cart, filename: cstring) -> CartLoadError {
 		return CartLoadError.Wrong_Size
 	}
 	target.texture = rl.LoadTextureFromImage(target.image)
+	rl.SetTextureFilter(target.texture, .POINT)
 	target.loaded = true
 	return CartLoadError.None
 }
