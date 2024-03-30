@@ -1,2 +1,5 @@
 repico
 ols.json
+*.a
+*.o
+src.bin
